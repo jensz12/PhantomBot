@@ -703,7 +703,9 @@
          * @commandpath echo [message] - In the console, can be used to chat as the bot. Also used by the webpanel to communicate with chat
          */
         if (command.equalsIgnoreCase('chat') || command.equalsIgnoreCase('echo')) {
-            $.say(event.getArguments());
+            if (argsString.length() > 0) {
+                $.say(argsString);
+            }
         }
     }
 
@@ -816,7 +818,10 @@
                 commandCost = 0,
                 isModv3 = $.isModv3(sender, event.getTags());
 
-            if (!$.commandExists(command) || ($.commandPause.isPaused() && !isModv3)) {
+            // Ensure that the command exists, is not paused and the associated module is enabled - however init.js items are not tracked
+            // in the getCommandScript() object, so, ignore any commands from init.js.
+            //
+            if ((!$.commandExists(command) || ($.commandPause.isPaused() && !isModv3)) || (!isModuleEnabled(getCommandScript(command)) && !getCommandScript(command).equals('./init.js'))) {
                 return;
             }
 
@@ -1302,10 +1307,17 @@
         });
 
         /**
-         * @event api-PanelWebSocketEvent
+         * @event api-WebPanelSocketUpdateEvent
          */
-        $api.on($script, 'panelWebSocket', function(event) {
-            callHook('panelWebSocket', event, false);
+        $api.on($script, 'webPanelSocketUpdate', function(event) {
+            callHook('webPanelSocketUpdate', event, false);
+        });
+
+        /**
+         * @event api-WebPanelSocketConnectedEvent
+         */
+        $api.on($script, 'webPanelSocketConnected', function(event) {
+            callHook('webPanelSocketConnected', event, false);
         });
 
         /**

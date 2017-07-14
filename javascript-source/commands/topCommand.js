@@ -4,7 +4,7 @@
  * Build and announce lists of top viewers (Highest points, highest time spent in the channel)
  */
 (function() {
-    var bots = ['moobot', 'nightbot', 'xanbot', 'hnlbot', 'ohbot', 'wizebot', 'vivbot', 'coebot', 'branebot', 'monstercat', 'curseappbot', 'revlobot', 'muxybot'], // Add your own name that you want to be in the list here.
+    var bots = ['moobot', 'nightbot', 'xanbot', 'hnlbot', 'ohbot', 'wizebot', 'vivbot', 'coebot', 'branebot', 'monstercat', 'curseappbot', 'revlobot', 'muxybot', 'faegwent'], // Add your own name that you want to be in the list here.
         amountPoints = $.getSetIniDbNumber('settings', 'topListAmountPoints', 5),
         amountTime = $.getSetIniDbNumber('settings', 'topListAmountTime', 5);
 
@@ -37,7 +37,7 @@
      * @returns {Array}
      */
     function getTop5(iniName) {
-        var keys = $.inidb.GetKeysByOrderValue(iniName, '', 'DESC', 0, 25),
+        var keys = $.inidb.GetKeysByOrderValue(iniName, '', 'DESC', (iniName.equals('points') ? amountPoints + 1 : amountTime + 1), 0),
             list = [],
             i;
 
@@ -54,7 +54,7 @@
             return (b.value - a.value);
         });
 
-        if (iniName == 'points') {
+        if (iniName.equals('points')) {
             return list.slice(0, amountPoints);
         } else {
             return list.slice(0, amountTime);

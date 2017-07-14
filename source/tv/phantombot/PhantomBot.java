@@ -106,6 +106,7 @@ import tv.phantombot.httpserver.HTTPServer;
 import tv.phantombot.httpserver.HTTPSServer;
 import tv.phantombot.panel.PanelSocketSecureServer;
 import tv.phantombot.panel.PanelSocketServer;
+import tv.phantombot.panel.NewPanelSocketServer;
 import tv.phantombot.script.Script;
 import tv.phantombot.script.ScriptApi;
 import tv.phantombot.script.ScriptEventManager;
@@ -143,6 +144,7 @@ public final class PhantomBot implements Listener {
     private Boolean webEnabled;
     private Boolean musicEnabled;
     private Boolean useHttps;
+    private Boolean testPanelServer;
     private int basePort;
 
     /* SSL information */
@@ -208,6 +210,7 @@ public final class PhantomBot implements Listener {
     private YTWebSocketServer youtubeSocketServer;
     private YTWebSocketSecureServer youtubeSocketSecureServer;
     private PanelSocketServer panelSocketServer;
+    private NewPanelSocketServer newPanelSocketServer;
     private PanelSocketSecureServer panelSocketSecureServer;
     private HTTPServer httpServer;
     private HTTPSServer httpsServer;
@@ -221,6 +224,7 @@ public final class PhantomBot implements Listener {
     public static Boolean enableRhinoDebugger = false;
     public static String timeZone = "GMT";
     public static Boolean useMessageQueue = true;
+    public static Boolean twitch_tcp_nodelay = true;
     public Boolean isExiting = false;
     private Boolean interactive;
     private Boolean resetLogin = false;
@@ -269,9 +273,6 @@ public final class PhantomBot implements Listener {
      * @return  String  Display version of PhantomBot.
      */
     public String botVersion() {
-        if (isNightly()) {
-            return "PhantomBot Version: " + RepoVersion.getPhantomBotVersion() + " - Nightly Build";
-        }
         return "PhantomBot Version: " + RepoVersion.getPhantomBotVersion();
     }
 
@@ -401,6 +402,7 @@ public final class PhantomBot implements Listener {
         this.musicEnabled = this.pbProperties.getProperty("musicenable", "true").equalsIgnoreCase("true");
         this.useHttps = this.pbProperties.getProperty("usehttps", "false").equalsIgnoreCase("true");
         this.socketServerTasksSize = Integer.parseInt(this.pbProperties.getProperty("wstasksize", "200"));
+        this.testPanelServer = this.pbProperties.getProperty("testpanelserver", "false").equalsIgnoreCase("true");
 
         /* Set the datastore variables */
         this.dataStoreType = this.pbProperties.getProperty("datastore", "");
@@ -477,6 +479,9 @@ public final class PhantomBot implements Listener {
 
         /* Toggle for the old servers. */
         this.legacyServers = this.pbProperties.getProperty("legacyservers", "false").equalsIgnoreCase("true");
+
+        /* Set the tcp delay toggle. Having this set to true uses a bit more bandwidth but sends messages to Twitch faster. */
+        PhantomBot.twitch_tcp_nodelay = this.pbProperties.getProperty("twitch_tcp_nodelay", "true").equalsIgnoreCase("true");
 
         /*
          * Set the message limit for session.java to use, note that Twitch rate limits at 100 messages in 30 seconds
@@ -835,7 +840,6 @@ public final class PhantomBot implements Listener {
             try {
                 checkPortAvailabity(basePort);
                 checkPortAvailabity(basePort + 4);
-                checkPortAvailabity(basePort + 5);
 
                 /* Is the music toggled on? */
                 if (musicEnabled) {
@@ -856,25 +860,38 @@ public final class PhantomBot implements Listener {
                 }
 
                 if (useHttps) {
-                    /* Set up the panel socket server */
-                    panelSocketSecureServer = new PanelSocketSecureServer((basePort + 4), webOAuth, webOAuthThro, httpsFileName, httpsPassword, socketServerTasksSize);
-                    /* Start the panel socket server */
-                    panelSocketSecureServer.start();
-                    print("PanelSocketSecureServer accepting connections on port: " + (basePort + 4) + " (SSL)");
+                    if (testPanelServer) {
+                        newPanelSocketServer = new NewPanelSocketServer((basePort + 4), webOAuth, webOAuthThro, httpsFileName, httpsPassword);
+                        newPanelSocketServer.start();
+                        print("TEST PanelSocketSecureServer accepting connections on port: " + (basePort + 4) + " (SSL)");
+                    } else {
+                        /* Set up the panel socket server */
+                        panelSocketSecureServer = new PanelSocketSecureServer((basePort + 4), webOAuth, webOAuthThro, httpsFileName, httpsPassword, socketServerTasksSize);
+                        /* Start the panel socket server */
+                        panelSocketSecureServer.start();
+                        print("PanelSocketSecureServer accepting connections on port: " + (basePort + 4) + " (SSL)");
+                    }
 
                     /* Set up a new https server */
                     httpsServer = new HTTPSServer((basePort), oauth, webOAuth, panelUsername, panelPassword, httpsFileName, httpsPassword);
-                    print("HTTPS server accepting connection on ports: " + basePort + " " + (basePort + 5) + " (SSL)");
+                    print("HTTPS server accepting connection on port: " + basePort + " (SSL)");
                 } else {
-                    /* Set up the panel socket server */
-                    panelSocketServer = new PanelSocketServer((basePort + 4), webOAuth, webOAuthThro);
-                    /* Start the panel socket server */
-                    panelSocketServer.start();
-                    print("PanelSocketServer accepting connections on port: " + (basePort + 4));
+                    if (testPanelServer) {
+                        newPanelSocketServer = new NewPanelSocketServer((basePort + 4), webOAuth, webOAuthThro);
+                        newPanelSocketServer.start();
+                        print("TEST PanelSocketServer accepting connections on port: " + (basePort + 4));
+                    } else {
+                        /* Set up the panel socket server */
+                        panelSocketServer = new PanelSocketServer((basePort + 4), webOAuth, webOAuthThro);
+                        /* Set up the NEW panel socket server */
+                        /* Start the panel socket server */
+                        panelSocketServer.start();
+                        print("PanelSocketServer accepting connections on port: " + (basePort + 4));
+                    }
 
                     /* Set up a new http server */
                     httpServer = new HTTPServer((basePort), oauth, webOAuth, panelUsername, panelPassword);
-                    print("HTTP server accepting connection on ports: " + basePort + " " + (basePort + 5));
+                    print("HTTP server accepting connection on port: " + basePort);
                 }
             } catch (Exception ex) {
                 print("Exception occurred in one of the socket based services, PhantomBot will now exit.");
@@ -1047,7 +1064,11 @@ public final class PhantomBot implements Listener {
         Script.global.defineProperty("channelName", channelName, 0);
         Script.global.defineProperty("ownerName", ownerName, 0);
         Script.global.defineProperty("ytplayer", (useHttps ? youtubeSocketSecureServer : youtubeSocketServer), 0);
-        Script.global.defineProperty("panelsocketserver", (useHttps ? panelSocketSecureServer : panelSocketServer), 0);
+        if (testPanelServer) {
+            Script.global.defineProperty("panelsocketserver", newPanelSocketServer, 0);
+        } else {
+            Script.global.defineProperty("panelsocketserver", (useHttps ? panelSocketSecureServer : panelSocketServer), 0);
+        }
         Script.global.defineProperty("random", random, 0);
         Script.global.defineProperty("youtube", YouTubeAPIv3.instance(), 0);
         Script.global.defineProperty("shortenURL", GoogleURLShortenerAPIv1.instance(), 0);
@@ -1083,11 +1104,6 @@ public final class PhantomBot implements Listener {
         if (this.backupSQLiteAuto) {
             doBackupSQLiteDB();
         }
-
-        /* Warn the user that the baseport + 5 is being decomissioned. */
-        print("");
-        print("DEPRECATION NOTICE: The web server running on port " + (basePort + 5) + " will be removed in the next release, please start to use port " + basePort + ".");
-        print("");
     }
 
     /*
@@ -1323,8 +1339,11 @@ public final class PhantomBot implements Listener {
         if (message.equalsIgnoreCase("revloconvert")) {
             print("[CONSOLE] Executing revloconvert");
             if (arguments.length() > 0) {
-                new RevloConverter(arguments);
+                RevloConverter.convert(arguments);
+            } else {
+                print("You must specify the file name you want to convert.");
             }
+            return;
         }
 
         if (message.equalsIgnoreCase("ankhtophantombot")) {

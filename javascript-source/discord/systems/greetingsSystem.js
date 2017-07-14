@@ -6,9 +6,9 @@
 	    channelName = $.getSetIniDbString('discordSettings', 'greetingsChannel', '');
 
 	/**
-     * @event panelWebSocket
+     * @event webPanelSocketUpdate
      */
-    $.bind('panelWebSocket', function(event) {
+    $.bind('webPanelSocketUpdate', function(event) {
         if (event.getScript().equalsIgnoreCase('./discord/systems/greetingsSystem.js')) {
         	joinToggle = $.getIniDbBoolean('discordSettings', 'joinToggle', false);
 	    	partToggle = $.getIniDbBoolean('discordSettings', 'partToggle', false);
@@ -31,13 +31,12 @@
 		    s = joinMessage;
 
 		if (s.match(/\(@name\)/)) {
-			s = $.replace(s, '(@name)', mention.getAsMention());
+			s = $.replace(s, '(@name)', mention);
 		}
 
 		if (s.match(/\(name\)/)) {
 			s = $.replace(s, '(name)', username);
 		}
-
 		$.discord.say(channelName, s);
 	});
 
@@ -54,7 +53,7 @@
 		    s = partMessage;
 
 		if (s.match(/\(@name\)/)) {
-			s = $.replace(s, '(@name)', mention.getAsMention());
+			s = $.replace(s, '(@name)', mention);
 		}
 
 		if (s.match(/\(name\)/)) {

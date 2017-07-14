@@ -40,7 +40,7 @@
         for (i in commands) {
             json = JSON.parse($.inidb.get('cooldown', commands[i]));
 
-            cooldowns[commands[i]] = new Cooldown(json.command, json.seconds, (json.isGlobal == true));
+            cooldowns[commands[i]] = new Cooldown(json.command, json.seconds, json.isGlobal.toString().equals('true'));
         }
     }
 
@@ -258,9 +258,9 @@
     });
 
     /*
-     * @event panelWebSocket
+     * @event webPanelSocketUpdate
      */
-    $.bind('panelWebSocket', function(event) {
+    $.bind('webPanelSocketUpdate', function(event) {
         if (event.getScript().equalsIgnoreCase('./core/commandCoolDown.js')) {
             if (event.getArgs()[0] == 'add') {
                 add(event.getArgs()[1], event.getArgs()[2], event.getArgs()[3].equals('true'));

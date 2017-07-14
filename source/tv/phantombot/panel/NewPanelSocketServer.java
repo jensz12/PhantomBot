@@ -28,9 +28,6 @@
  * // Get Version
  * { "version" : "unique_id" }
  *
- * // Send connected event
- * { "connected" : "unique_id" }
- *
  * // Send command - if username is not provided, defaults to the botname.
  * { "command" : "command line", "username" : "user name", "query_id" : "query_id" }
  *
@@ -67,7 +64,7 @@
  * { "versionresult" : "unique_id", "version" : "core version (repo version)" }
  *
  * // Return Command Complete ID (does not mean it was successful, just that the bot returned
- * // control to the PanelSocketServer.
+ * // control to the NewPanelSocketServer.
  * { "query_id" : "query_id" }
  *
  * // Return DB query. Returns "error" key only if error occurred.
@@ -116,9 +113,10 @@ import com.gmt2001.TwitchAPIv5;
 
 import com.google.common.collect.Maps;
 
-import org.java_websocket.WebSocket;
-import org.java_websocket.handshake.ClientHandshake;
-import org.java_websocket.server.WebSocketServer;
+import fr.bmartel.protocol.http.utils.StringUtils;
+import fr.bmartel.protocol.websocket.listeners.IClientEventListener;
+import fr.bmartel.protocol.websocket.server.IWebsocketClient;
+import fr.bmartel.protocol.websocket.server.WebsocketServer;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -132,94 +130,159 @@ import tv.phantombot.event.webpanel.WebPanelSocketUpdateEvent;
 import tv.phantombot.PhantomBot;
 
 /**
- * Provides a WebSocketServer to provide service to the Control Panel. 
+ * Provides a IWebsocketClientServer to provide service to the Control Panel. 
  * 
  * @author IllusionaryOne
  */
-public class PanelSocketServer extends WebSocketServer {
+public class NewPanelSocketServer {
 
+    private WebsocketServer server;
     private String authString;
     private String authStringRO;
     private Map<String, wsSession> wsSessionMap = Maps.newHashMap();
     private boolean dbCallNull = false;
 
     /**
-     * Constructor for class which initializes the WebSocket object.
+     * Constructor for class which initializes the WebsocketServer object.
      *
      * @param port         The port to bind to.
      * @param authString   The authorization string to use for read/write connectivity.
      * @param authStringRO The authorizatin string to use for read-only connectivity.
      */
-    public PanelSocketServer(int port, String authString, String authStringRO) throws Exception {
-        super(new InetSocketAddress(port));
+    public NewPanelSocketServer(int port, String authString, String authStringRO) throws Exception {
+        this(port, authString, authStringRO, null, null);
+    }
+
+    /**
+     * Constructor for class which initializes the WebsocketServer object.
+     *
+     * @param port         The port to bind to.
+     * @param authString   The authorization string to use for read/write connectivity.
+     * @param authStringRO The authorizatin string to use for read-only connectivity.
+     * @param keyFileName  Name of the keyfile for SSL encryption.
+     * @param keyPassword  The password to unlock the keyfile.
+     */
+    public NewPanelSocketServer(int port, String authString, String authStringRO, String keyFileName, String keyPassword) throws Exception {
         this.authString = authString;
         this.authStringRO = authStringRO;
-    
+
         Thread.setDefaultUncaughtExceptionHandler(com.gmt2001.UncaughtExceptionHandler.instance());
+        server = new WebsocketServer(port);
+        if (keyFileName != null && keyPassword != null) {
+            server.setSsl(true);
+            server.setSSLParams("JKS", "SunX509", "TLS", keyFileName, keyPassword);
+        }
+
+        server.addServerEventListener(new IClientEventListener() {
+
+            @Override
+            public void onMessageReceivedFromClient(IWebsocketClient client, String message) {
+                onMessage(client, message);
+            }
+
+            @Override
+            public void onClientConnection(IWebsocketClient client) {
+                onOpen(client);
+            }
+
+            @Override
+            public void onClientClose(IWebsocketClient client) {
+                onClose(client);
+            }
+
+            @Override
+            public void onServerError(IWebsocketClient client, String errorMessage) {
+                serverError(errorMessage);
+            }
+
+            @Override
+            public void onError(IWebsocketClient client, String errorMessage) {
+                clientError(client, errorMessage);
+            }
+        });
+    }
+     
+
+    /**
+     * Starts the created WebsocketServer
+     */
+    public void start() throws Exception {
+        try {
+            server.start();
+        } catch (Exception ex) {
+            com.gmt2001.Console.err.println("Failed to start WebSocket Server: " + ex.getMessage());
+            throw ex;
+        }
     }
 
     /**
-     * Override for the WebSocketServer class which is called upon a new connection.
+     * Override for the IWebsocketClientServer class which is called upon a new connection.
      *
-     * @param webSocket       The WebSocket object for this connection.
-     * @param clientHandshake Additional information about the connection.
+     * @param webSocket       The IWebsocketClient object for this connection.
      */
-    @Override
-    public void onOpen(WebSocket webSocket, ClientHandshake clientHandshake) {
+    public void onOpen(IWebsocketClient webSocket) {
         wsSessionMap.put(genSessionKey(webSocket), new wsSession(false, true, webSocket));
-        com.gmt2001.Console.debug.println("PanelSocketServer: Connection from " + 
-                                          webSocket.getRemoteSocketAddress().getHostName() + 
-                                          ":" + webSocket.getRemoteSocketAddress().getPort());
+        com.gmt2001.Console.debug.println("Connection from " + webSocket.getHostName() + ":" + webSocket.getPort());
 
     }
 
     /**
-     * Override for the WebSocketServer class which is called on start.
-     */
-    @Override
-    public void onStart() {
-        com.gmt2001.Console.debug.println("Server Started");
-    }
-
-    /**
-     * Override for the WebSocketServer class which is called upon a disconnect.
+     * Override for the IWebsocketClientServer class which is called upon a disconnect.
      *
-     * @param webSocket The WebSocket object for this disconnect.
-     * @param i         Return code from WebSocketServer.
-     * @param s         The reason for the disconnect.
-     * @param b         Indicates if the disconnect was at the client or server level.
+     * @param webSocket The IWebsocketClient object for this disconnect.
      */
-    @Override
-    public void onClose(WebSocket webSocket, int i, String s, boolean b) {
+    public void onClose(IWebsocketClient webSocket) {
         wsSessionMap.remove(genSessionKey(webSocket));
-        com.gmt2001.Console.debug.println("PanelSocketServer: Disconnection from " + 
-                                          webSocket.getRemoteSocketAddress().getHostName() + 
-                                          ":" + webSocket.getRemoteSocketAddress().getPort());
+        com.gmt2001.Console.debug.println("Close from " + webSocket.getHostName() + ":" + webSocket.getPort());
     }
 
     /**
-     * Override for the WebSocketServer class which is called when a message is received.
+     * Override for the IWebsocketClientServer class which is called upon a server error.
      *
-     * @param webSocket  The WebSocket object for this message.
-     * @param jsonString The message sent on the WebSocket.
+     * @param String The error message from the socket server.
      */
-    @Override
-    public void onMessage(WebSocket webSocket, String jsonString) {
+    public void serverError(String errorMessage) {
+        com.gmt2001.Console.err.println("WebSocket Server Error, will attempt to restart server. Error: " + errorMessage);
+        try {
+            start();
+        } catch (Exception ex) {
+            com.gmt2001.Console.err.println("PhantomBot is Exiting...");
+            System.exit(0);
+        }
+    }
+
+    /**
+     * Override for the IWebsocketClientServer class which is called upon a client connection error.
+     *
+     * @param String The error message from the socket server.
+     */
+    public void clientError(IWebsocketClient webSocket, String errorMessage) {
+        /* TODO: This may also need to remove the session, will need to check more on this. */
+        com.gmt2001.Console.debug.println("Error from Client Socket: " + errorMessage);
+    }
+
+    /**
+     * Override for the IWebsocketClientServer class which is called when a message is received.
+     *
+     * @param webSocket  The IWebsocketClient object for this message.
+     * @param jsonString The message sent on the IWebsocketClient.
+     */
+    public void onMessage(IWebsocketClient webSocket, String jsonString) {
         try {
             MessageRunnable messageRunnable = new MessageRunnable(webSocket, jsonString);
-            new Thread(messageRunnable, "tv.phantombot.panel.PanelSocketServer::MessageRunnable").start();
+            new Thread(messageRunnable, "tv.phantombot.panel.NewPanelSocketServer::MessageRunnable").start();
         } catch (Exception ex) {
             handleMessage(webSocket, jsonString);
         }
     }
 
     /**
-     * Parser of the data received on the WebSocket.
+     * Parser of the data received on the IWebsocketClient.
      *
-     * @param webSocket  The WebSocket object for this message.
-     * @param jsonString The message that was received on the WebSocket, assumed to be a JSON message.
+     * @param webSocket  The IWebsocketClient object for this message.
+     * @param jsonString The message that was received on the IWebsocketClient, assumed to be a JSON message.
      */
-    private void handleMessage(WebSocket webSocket, String jsonString) {
+    private void handleMessage(IWebsocketClient webSocket, String jsonString) {
         JSONObject jsonObject;
         JSONArray  jsonArray;
         wsSession  sessionData;
@@ -231,11 +294,11 @@ public class PanelSocketServer extends WebSocketServer {
         try {
             jsonObject = new JSONObject(jsonString);
         } catch (JSONException ex) {
-            com.gmt2001.Console.err.println("PanelSocketServer: Bad JSON passed ["+jsonString+"]");
+            com.gmt2001.Console.err.println("NewPanelSocketServer: Bad JSON passed ["+jsonString+"]");
             com.gmt2001.Console.err.printStackTrace(ex);
             return;
         } catch (Exception ex) {
-            com.gmt2001.Console.err.println("PanelSocketServer: Exception Occurred");
+            com.gmt2001.Console.err.println("NewPanelSocketServer: Exception Occurred");
             com.gmt2001.Console.err.printStackTrace(ex);
             return;
         }
@@ -267,7 +330,7 @@ public class PanelSocketServer extends WebSocketServer {
             return;
         }
 
-        // debugMsg("PanelSocketServer::onMessage(" + jsonString + ")");
+        // debugMsg("NewPanelSocketServer::onMessage(" + jsonString + ")");
 
         try {
             if (jsonObject.has("command")) {
@@ -341,75 +404,32 @@ public class PanelSocketServer extends WebSocketServer {
                 String order = jsonObject.getJSONObject("query").getString("order");
                 doDBKeysSearch(webSocket, uniqueID, table, key, limit, order, offset);
             } else {
-                com.gmt2001.Console.err.println("PanelSocketServer: Unknown JSON passed [" + jsonString + "]");
+                com.gmt2001.Console.err.println("NewPanelSocketServer: Unknown JSON passed [" + jsonString + "]");
                 return;
             }
         } catch (JSONException ex) {
-            com.gmt2001.Console.err.println("PanelSocketServer::JSONException(" + ex.getMessage() + "): " + jsonString);
+            com.gmt2001.Console.err.println("NewPanelSocketServer::JSONException(" + ex.getMessage() + "): " + jsonString);
         } 
     }
 
     /**
-     * Override for the WebSocketServer class which is called upon an error condition.
-     *
-     * @param webSocket The WebSocket which generated the error.
-     * @param e         The exception object.
-     */
-    @Override
-    public void onError(WebSocket webSocket, Exception e) {
-        com.gmt2001.Console.err.printStackTrace(e);
-    }
-
-    /**
-     * Override for WebSocketServer class which is called when the WebSocketServer is closing.
-     *
-     * @param ws     The WebSocket that generated this event.
-     * @param code   Internal code to describe the reason for the socket closing.
-     * @param reason Reason for the socket to close.
-     * @param remote Closed by remote or local?
-     */
-    @Override
-    public void onWebsocketClosing(WebSocket ws, int code, String reason, boolean remote) {
-        com.gmt2001.Console.debug.println("PanelSocketServer::Closing WebSocket");
-    }
-
-    /**
-     * Override for WebSocketServer class which is called when the WebSocketServer is asked to close.
-     *
-     * @param ws     The WebSocket that generated this event.
-     * @param code   Internal code to describe the reason for the request to close the socket.
-     * @param reason Reason for the socket to close.
-     */
-    @Override
-    public void onWebsocketCloseInitiated(WebSocket ws, int code, String reason) {
-        com.gmt2001.Console.debug.println("PanelSocketServer::Closing WebSocket Initiated");
-    }
-
-    /**
-     * Stops the thread that controls this object, thus closing down the WebSocketServer.
+     * Stops the thread that controls this object, thus closing down the IWebsocketClientServer.
      */
     public void dispose() {
-        try {
-            this.stop(2000);
-        } catch (InterruptedException ex) {
-            com.gmt2001.Console.err.printStackTrace(ex);
-        }
+        server.closeServer();
     }
 
     /**
-     * Sends data to all open WebSockets.
+     * Sends data to all open IWebsocketClients.
      *
-     * @param text Text to send to all open WebSockets.
+     * @param text Text to send to all open IWebsocketClients.
      */
     public void sendToAll(String text) {
-        Collection<WebSocket> con = connections();
-        synchronized (con) {
-            for (WebSocket c : con) {
-                try {
-                    c.send(text);
-                } catch (Exception ex) {
-                    com.gmt2001.Console.debug.println("Failed to send a message to the panel socket: [" + ex.getClass().getSimpleName() + "] " + ex.getMessage());
-                }
+        for (wsSession session: wsSessionMap.values()) {
+            try {
+                session.getIWebsocketClient().send(text);
+            } catch (Exception ex) {
+                com.gmt2001.Console.debug.println("Failed to send a message to the panel socket: [" + ex.getClass().getSimpleName() + "] " + ex.getMessage());
             }
         }
     }
@@ -417,12 +437,12 @@ public class PanelSocketServer extends WebSocketServer {
     /**
      * Handles commands in PhantomBot and will optionally return a completion status.
      *
-     * @param webSocket The WebSocket which provided the command.
+     * @param webSocket The IWebsocketClient which provided the command.
      * @param command   The command to execute in PhantomBot.
      * @param username  The user to execute the command as.
-     * @param id        Optional unique ID which is sent back to the WebSocket.
+     * @param id        Optional unique ID which is sent back to the IWebsocketClient.
      */
-    private void doHandleCommand(WebSocket webSocket, String command, String username, String id) {
+    private void doHandleCommand(IWebsocketClient webSocket, String command, String username, String id) {
         PhantomBot.instance().handleCommand(username, command);
         if (!id.isEmpty()) {
             JSONStringer jsonObject = new JSONStringer();
@@ -437,7 +457,7 @@ public class PanelSocketServer extends WebSocketServer {
      * @param webSocket The WebSocket which provided the command.
      * @param id Optional unique ID which is sent back to the WebSocket.
      */
-    private void handleConnection(WebSocket webSocket, String id) {
+    private void handleConnection(IWebsocketClient webSocket, String id) {
         if (!id.isEmpty()) {
             JSONStringer jsonObject = new JSONStringer();
             jsonObject.object().key("query_id").value(id).endObject();
@@ -450,10 +470,10 @@ public class PanelSocketServer extends WebSocketServer {
     /**
      * Provides a version payload.
      *
-     * @param webSocket The WebSocket which requested the version.
-     * @param id        The unique ID which is sent back to the WebSocket.
+     * @param webSocket The IWebsocketClient which requested the version.
+     * @param id        The unique ID which is sent back to the IWebsocketClient.
      */
-    private void doVersion(WebSocket webSocket, String id) {
+    private void doVersion(IWebsocketClient webSocket, String id) {
         JSONStringer jsonObject = new JSONStringer();
         String version = "";
 
@@ -474,12 +494,12 @@ public class PanelSocketServer extends WebSocketServer {
     /**
      * Performs a query of the DataStore to return a specific value.
      *
-     * @param webSocket The WebSocket which requested the data.
-     * @param id        The unique ID which is sent back to the WebSocket.
+     * @param webSocket The IWebsocketClient which requested the data.
+     * @param id        The unique ID which is sent back to the IWebsocketClient.
      * @param table     Table name to query.
      * @param key       Key to query with.
      */
-    private void doDBQuery(WebSocket webSocket, String id, String table, String key) {
+    private void doDBQuery(IWebsocketClient webSocket, String id, String table, String key) {
         JSONStringer jsonObject = new JSONStringer();
         String value = "";
 
@@ -502,11 +522,11 @@ public class PanelSocketServer extends WebSocketServer {
     /**
      * Performs a query of the DataStore to return a list of keys.
      *
-     * @param webSocket The WebSocket which requested the data.
-     * @param id        The unique ID which is sent back to the WebSocket.
+     * @param webSocket The IWebsocketClient which requested the data.
+     * @param id        The unique ID which is sent back to the IWebsocketClient.
      * @param table     Table name to query.
      */
-    private void doDBKeysQuery(WebSocket webSocket, String id, String table) {
+    private void doDBKeysQuery(IWebsocketClient webSocket, String id, String table) {
         JSONStringer jsonObject = new JSONStringer();
 
         jsonObject.object().key("query_id").value(id).key("results").array();
@@ -530,17 +550,18 @@ public class PanelSocketServer extends WebSocketServer {
         } else {
             webSocket.send(jsonObject.toString());
         }
+       
     }
 
     /**
      * Performs a query of the DataStore to return a list of values from multiple keys.
      *
-     * @param webSocket The WebSocket which requested the data.
-     * @param id        The unique ID which is sent back to the WebSocket.
+     * @param webSocket The IWebsocketClient which requested the data.
+     * @param id        The unique ID which is sent back to the IWebsocketClient.
      * @param table     Table name to query.
      * @param jsonArray JSON array object that holds a list of keys to query against the table with.
      */
-    private void doDBKeysListQuery(WebSocket webSocket, String id, JSONArray jsonArray) {
+    private void doDBKeysListQuery(IWebsocketClient webSocket, String id, JSONArray jsonArray) {
         JSONStringer jsonObject = new JSONStringer();
 
         if (jsonArray.length() == 0) {
@@ -575,14 +596,14 @@ public class PanelSocketServer extends WebSocketServer {
     /**
      * Performs a query of the DataStore to return a list of values from multiple keys.
      *
-     * @param webSocket The WebSocket which requested the data.
-     * @param id        The unique ID which is sent back to the WebSocket.
+     * @param webSocket The IWebsocketClient which requested the data.
+     * @param id        The unique ID which is sent back to the IWebsocketClient.
      * @param table     Table name to query.
      * @param limit     Limit you want to get sent.
      * @param offset    the offset
      * @param order     ASC or DESC
      */
-    private void doDBKeysByOrder(WebSocket webSocket, String id, String table, String limit, String offset, String order) {
+    private void doDBKeysByOrder(IWebsocketClient webSocket, String id, String table, String limit, String offset, String order) {
         JSONStringer jsonObject = new JSONStringer();
 
         jsonObject.object().key("query_id").value(id).key("results").array();
@@ -611,12 +632,12 @@ public class PanelSocketServer extends WebSocketServer {
     /**
      * Performs a query of the DataStore to return a list of values from multiple keys.
      *
-     * @param webSocket The WebSocket which requested the data.
-     * @param id        The unique ID which is sent back to the WebSocket.
+     * @param webSocket The IWebsocketClient which requested the data.
+     * @param id        The unique ID which is sent back to the IWebsocketClient.
      * @param table     Table name to query.
      * @param key       key to search
      */
-    private void doDBKeysSearch(WebSocket webSocket, String id, String table, String key, String order, String limit, String offset) {
+    private void doDBKeysSearch(IWebsocketClient webSocket, String id, String table, String key, String order, String limit, String offset) {
         JSONStringer jsonObject = new JSONStringer();
 
         jsonObject.object().key("query_id").value(id).key("results").array();
@@ -645,13 +666,13 @@ public class PanelSocketServer extends WebSocketServer {
     /**
      * Performs an update of the DataStore.
      *
-     * @param webSocket The WebSocket which requested the data.
-     * @param id        The unique ID which is sent back to the WebSocket.
+     * @param webSocket The IWebsocketClient which requested the data.
+     * @param id        The unique ID which is sent back to the IWebsocketClient.
      * @param table     Table name to update.
      * @param key       The key to update.
      * @param value     The value to insert into the table related to the key.
      */
-    private void doDBUpdate(WebSocket webSocket, String id, String table, String key, String value) {
+    private void doDBUpdate(IWebsocketClient webSocket, String id, String table, String key, String value) {
         JSONStringer jsonObject = new JSONStringer();
         try {
             PhantomBot.instance().getDataStore().set(table, key, value);
@@ -669,13 +690,13 @@ public class PanelSocketServer extends WebSocketServer {
     /**
      * Performs an update of the DataStore, incrementing a value.
      *
-     * @param webSocket The WebSocket which requested the data.
-     * @param id        The unique ID which is sent back to the WebSocket.
+     * @param webSocket The IWebsocketClient which requested the data.
+     * @param id        The unique ID which is sent back to the IWebsocketClient.
      * @param table     Table name to update.
      * @param key       The key to update.
      * @param value     The value to increment into the table related to the key.
      */
-    private void doDBIncr(WebSocket webSocket, String id, String table, String key, String value) {
+    private void doDBIncr(IWebsocketClient webSocket, String id, String table, String key, String value) {
         JSONStringer jsonObject = new JSONStringer();
         try {
             PhantomBot.instance().getDataStore().incr(table, key, Integer.parseInt(value));
@@ -693,13 +714,13 @@ public class PanelSocketServer extends WebSocketServer {
     /**
      * Performs an update of the DataStore, decrementing a value.
      *
-     * @param webSocket The WebSocket which requested the data.
-     * @param id        The unique ID which is sent back to the WebSocket.
+     * @param webSocket The IWebsocketClient which requested the data.
+     * @param id        The unique ID which is sent back to the IWebsocketClient.
      * @param table     Table name to update.
      * @param key       The key to update.
      * @param value     The value to decrement into the table related to the key.
      */
-    private void doDBDecr(WebSocket webSocket, String id, String table, String key, String value) {
+    private void doDBDecr(IWebsocketClient webSocket, String id, String table, String key, String value) {
         JSONStringer jsonObject = new JSONStringer();
         try {
             PhantomBot.instance().getDataStore().decr(table, key, Integer.parseInt(value));
@@ -716,12 +737,12 @@ public class PanelSocketServer extends WebSocketServer {
     /**
      * Performs a delete operation in the DataStore.
      *
-     * @param webSocket The WebSocket which requested the data.
-     * @param id        The unique ID which is sent back to the WebSocket.
+     * @param webSocket The IWebsocketClient which requested the data.
+     * @param id        The unique ID which is sent back to the IWebsocketClient.
      * @param table     Table name to update.
      * @param key       The key to delete.
      */
-    private void doDBDelKey(WebSocket webSocket, String id, String table, String key) {
+    private void doDBDelKey(IWebsocketClient webSocket, String id, String table, String key) {
         JSONStringer jsonObject = new JSONStringer();
         try {
             PhantomBot.instance().getDataStore().del(table, key);
@@ -776,7 +797,7 @@ public class PanelSocketServer extends WebSocketServer {
      * @param arguments Any arguments that are needed for the event.
      * @param jsonArray Arguments provided in a JSONArray to be parsed out and processed.
      */
-    private void doWSEvent(WebSocket webSocket, String id, String script, String arguments, JSONArray jsonArray) {
+    private void doWSEvent(IWebsocketClient webSocket, String id, String script, String arguments, JSONArray jsonArray) {
         JSONStringer jsonObject = new JSONStringer();
         List<String> tempArgs = new LinkedList<>();
         String[] args = null;
@@ -808,16 +829,16 @@ public class PanelSocketServer extends WebSocketServer {
      * @param message Message to display.
      */
     private void debugMsg(String message) {
-        com.gmt2001.Console.debug.println("PanelSocketServer: " + message);
+        com.gmt2001.Console.debug.println("NewPanelSocketServer: " + message);
     }
 
     /**
-     * Generates a new session key for a WebSocket connection.
+     * Generates a new session key for a IWebsocketClient connection.
      *
-     * @param webSocket The WebSocket connection to generate a session key for.
+     * @param webSocket The IWebsocketClient connection to generate a session key for.
      * @return          Newly generated session key.
      */
-    private static String genSessionKey(WebSocket webSocket) {
+    private static String genSessionKey(IWebsocketClient webSocket) {
         return new String(Integer.toString(webSocket.getRemoteSocketAddress().hashCode()));
     }
 
@@ -858,21 +879,21 @@ public class PanelSocketServer extends WebSocketServer {
     }
 
     /**
-     * Stores Session data for the various open WebSocket objects.
+     * Stores Session data for the various open IWebsocketClient objects.
      */
     private class wsSession {
         Boolean authenticated;
         Boolean readonly;
-        WebSocket webSocket;
+        IWebsocketClient webSocket;
 
         /**
          * Constructor for wsSession class.
          *
          * @param authenticated Indicates if the session is authenticated.
          * @param readonly      Indicates if this is a read-only session.
-         * @param webSocket     The WebSocket object that this session relates to.
+         * @param webSocket     The IWebsocketClient object that this session relates to.
          */
-        public wsSession(Boolean authenticated, Boolean readonly, WebSocket webSocket) {
+        public wsSession(Boolean authenticated, Boolean readonly, IWebsocketClient webSocket) {
             this.authenticated = authenticated;
             this.readonly = readonly;
             this.webSocket = webSocket;
@@ -915,44 +936,44 @@ public class PanelSocketServer extends WebSocketServer {
         }
 
         /**
-         * Sets the WebSocket object after the object is constructed.
+         * Sets the IWebsocketClient object after the object is constructed.
          *
-         * @param webSocket New WebSocket object to associate to this session.
+         * @param webSocket New IWebsocketClient object to associate to this session.
          */
-        public void setWebSocket(WebSocket webSocket) {
+        public void setIWebsocketClient(IWebsocketClient webSocket) {
             this.webSocket = webSocket;
         }
 
         /**
-         * Gets the WebSocket object that is associated to the session.
+         * Gets the IWebsocketClient object that is associated to the session.
          *
-         * @return WebSocket object associated with session.
+         * @return IWebsocketClient object associated with session.
          */
-        public WebSocket getWebSocket() {
+        public IWebsocketClient getIWebsocketClient() {
             return webSocket;
         }
     }
 
     /**
-     * Helper class responsible for spawning threads for handling input from a WebSocket.
+     * Helper class responsible for spawning threads for handling input from a IWebsocketClient.
      */
     private class MessageRunnable implements Runnable {
-        private WebSocket webSocket;
+        private IWebsocketClient webSocket;
         private String jsonString;
 
         /**
          * Constructor which sets the values on the object.
          *
-         * @param webSocket  The WebSocket object which provided data.
-         * @param jsonString The data sent over the WebSocket object.
+         * @param webSocket  The IWebsocketClient object which provided data.
+         * @param jsonString The data sent over the IWebsocketClient object.
          */
-        public MessageRunnable(WebSocket webSocket, String jsonString) {
+        public MessageRunnable(IWebsocketClient webSocket, String jsonString) {
             this.webSocket = webSocket;
             this.jsonString = jsonString;
         }
 
         /**
-         * Execute the parser to handle the input data from the WebSocket.
+         * Execute the parser to handle the input data from the IWebsocketClient.
          */
         public void run() {
             handleMessage(webSocket, jsonString);
