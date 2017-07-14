@@ -127,7 +127,7 @@ public class DiscordAPI extends DiscordUtil {
             
             com.gmt2001.Console.out.println("[DISCORD] [#" + channel + "] " + username + ": " + message);
 
-            if (message.startsWith("!")) {
+            if (message.startsWith("-")) {
                 parseCommand(iUsername, iChannel, message, isAdmin);
             }
 
